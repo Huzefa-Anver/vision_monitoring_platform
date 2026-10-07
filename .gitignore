@@ -1,0 +1,15 @@
+# runtime data written by the platform (captures, frames, labels, recordings, state with RTSP credentials)
+data/
+*.log
+.env
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# model weights / videos never go in git
+*.pt
+*.pth
+*.onnx
+*.mp4
+*.mkv

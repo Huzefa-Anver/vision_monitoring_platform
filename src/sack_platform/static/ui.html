@@ -1,0 +1,401 @@
+<!doctype html><meta charset=utf-8><title>Sack labelling platform</title>
+<style>
+:root{--bg:#0d0f12;--card:#161a1f;--line:#262c34;--ink:#e8eaed;--dim:#93a0ae;
+      --accent:#4da3ff;--good:#4caf50;--warn:#e0a33a;--bad:#d0504f}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;margin:0}
+header{background:#11151a;border-bottom:1px solid var(--line);padding:10px 18px;
+ display:flex;align-items:center;gap:18px;position:sticky;top:0;z-index:20}
+h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+nav{display:flex;gap:6px}
+nav button{background:transparent;border:1px solid transparent;color:var(--dim);
+ padding:8px 14px;border-radius:8px;cursor:pointer;font:14px system-ui}
+nav button:hover{color:var(--ink)}
+nav button.on{background:#1d2530;color:#fff;border-color:#31404f}
+nav .step{opacity:.55;font-size:11px;margin-right:6px}
+main{padding:18px;max-width:1500px}
+section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px;margin-bottom:16px}
+.card.excluded{border-color:var(--bad);opacity:0.6}
+.card.excluded canvas{filter:grayscale(0.6)}
+h2{font-size:15px;margin:0 0 4px}
+.hint{color:var(--dim);font-size:13px;margin-bottom:12px;max-width:900px}
+label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+input,select,textarea{background:#10141a;color:var(--ink);border:1px solid #2d3540;
+ border-radius:7px;padding:9px 11px;font:14px system-ui;width:100%}
+input[type=range]{padding:0}
+.grid{display:grid;gap:12px}
+.g3{grid-template-columns:2fr 1fr 1fr}
+.g2{grid-template-columns:1fr 1fr}
+.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+button{background:#222a33;color:var(--ink);border:1px solid #34404d;border-radius:8px;
+ padding:9px 15px;cursor:pointer;font:14px system-ui}
+button:hover{border-color:#4a5b6b}
+button.pri{background:#14532d;border-color:#2e7d32;color:#cdf0d3}
+button.dan{background:#4a1e1e;border-color:#8b3d3d;color:#f0c8c8}
+button.dim{opacity:0.45}
+button.dim:hover{opacity:0.75}
+button.on{background:#2e7d32;border-color:#4caf50;color:#fff}
+button.big{padding:16px;font-size:16px;font-weight:700;width:100%}
+button.warnbtn{background:#5a3a12;border-color:#9a6a22;color:#ffd9a0}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.pill{padding:3px 10px;border-radius:12px;background:#1d232b;font-size:12.5px;color:var(--dim)}
+.pill b{color:var(--ink)}
+.ok{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+img.live{width:100%;border-radius:10px;background:#000;display:block}
+canvas{border-radius:8px;display:block;cursor:crosshair;max-width:100%}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+.srcrow{display:flex;gap:10px;align-items:center;padding:9px;border:1px solid var(--line);
+ border-radius:9px;margin-bottom:8px;background:#12161c}
+.srcrow .u{font:12px monospace;color:var(--dim);word-break:break-all;flex:1}
+.tag{padding:2px 9px;border-radius:11px;background:#1f2c3a;color:#8fd0ff;font-size:12px}
+.empty{color:var(--dim);padding:26px;text-align:center;border:1px dashed var(--line);border-radius:9px}
+.crop{background:#12161c;border:2px solid var(--line);border-radius:9px;padding:8px;width:300px}
+.crop.ok{border-color:var(--good)}.crop.bad{border-color:var(--bad)}
+.crop img{width:100%;border-radius:5px}
+.opts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.opts button{padding:4px 8px;font-size:11.5px}
+.flex{display:flex;gap:14px;flex-wrap:wrap}
+</style>
+<header>
+  <h1>Sack labelling platform</h1>
+  <nav id=nav></nav>
+  <div style="margin-left:auto" class=row>
+    <span class=pill id=dsPill>dataset</span>
+    <span class=pill id=gpuPill style="cursor:pointer" onclick="gpuTogglePanel()"></span>
+  </div>
+</header>
+<div id=gpuPanel style="display:none;background:#11161c;border-bottom:1px solid var(--line);padding:12px 18px">
+  <div class=hint style="margin-bottom:8px">Each of the three GPU users below (live-watch in step 2,
+  scan in step 1, one-click capture) keeps its own model copy so none of them ever blocks another -
+  see the concurrency note if you're curious why. Load one ahead of time to skip the ~1s warm-up on
+  first use, or unload one you're done with to free memory.</div>
+  <div id=gpuRows></div>
+</div>
+<main>
+
+<!-- ============ 1 SOURCES ============ -->
+<section id=s1>
+ <div class=card>
+  <h2>Open a recording</h2>
+  <div class=hint>Put in the camera URL and a starting time, then scrub through the recording until
+  you find what you are looking for &mdash; a white-sack delivery, a busy morning, a moment the model
+  got wrong. No model runs here, so it is quick and does not touch the GPU.</div>
+  <div><label>full RTSP URL, including starttime</label>
+    <div class=row>
+      <input id=pvUrl style="flex:1;font:13px monospace"
+        value="" placeholder="rtsp://user:password@nvr-host:554/cam/playback?channel=3&amp;starttime=2026_09_03_14_30_00">
+      <button class=pri onclick="pvOpen()">open</button>
+      <button class=dan onclick="pvStop()">stop</button></div></div>
+  <div class=hint style="margin:8px 0 0">
+    Paste it exactly as it is &mdash; the time is read out of <code>starttime=</code> and the skip
+    buttons below rewrite it for you. Note <code>/cam/playback</code>, not
+    <code>/cam/realmonitor</code>: realmonitor is the live feed and ignores the time.</div>
+  <input id=pvDt type="hidden">
+ </div>
+
+ <div class=card>
+  <div class=row style="margin-bottom:10px">
+    <span class=pill>now at <b id=pvNow>&mdash;</b></span>
+    <span class=pill id=pvSt>idle</span>
+    <span class=pill>fps <b id=pvFps>0</b></span>
+    <span class=pill style="font:11px monospace;max-width:520px;overflow:hidden;text-overflow:ellipsis"
+      id=pvUrlNow></span>
+    <span style="margin-left:auto"></span>
+    <label style="margin:0">speed</label>
+    <button onclick="pvSpeed(1)" id=sp1 class=on>1x</button>
+    <button onclick="pvSpeed(4)" id=sp4>4x</button>
+    <button onclick="pvSpeed(10)" id=sp10>10x</button>
+  </div>
+  <div class=row style="margin-bottom:10px">
+    <button onclick="pvSeek(-1800)">&laquo; 30 min</button>
+    <button onclick="pvSeek(-300)">&laquo; 5 min</button>
+    <button onclick="pvSeek(-60)">&laquo; 1 min</button>
+    <button onclick="pvSeek(-10)">&laquo; 10 s</button>
+    <button onclick="pvSeek(10)">10 s &raquo;</button>
+    <button onclick="pvSeek(60)">1 min &raquo;</button>
+    <button onclick="pvSeek(300)">5 min &raquo;</button>
+    <button onclick="pvSeek(1800)">30 min &raquo;</button>
+  </div>
+  <img class=live id=pvImg src="/preview">
+ </div>
+
+ <div class=card>
+  <h2>Found something? Tag this moment</h2>
+  <div class=hint>Saves the URL with the time you are currently watching, so it can be reopened
+  or handed to step 2 later.</div>
+  <div class=row>
+    <input id=srcTag placeholder="what is in it - white_sack, busy morning, model got it wrong" style="flex:1">
+    <input id=srcNote placeholder="optional note" style="flex:1">
+    <button class=pri onclick="addSource()">save this moment</button>
+  </div>
+ </div>
+
+ <div class=card>
+  <div class=row style="align-items:center">
+   <h2 style="margin:0">Find automatically with the model</h2>
+   <label class=row style="margin-left:auto;gap:6px">
+     <input type=checkbox id=scanOn onchange="scanToggle()">
+     <span>on</span>
+   </label>
+  </div>
+  <div class=hint>Runs the real detector across a time range from the URL above (needs a
+  <code>starttime=</code>), at whatever confidence you would deploy with - not a colour proxy,
+  the same model that decides in production. Every hit is merged into a time range and dropped
+  into Saved moments below for you to review, exactly like tagging one by hand.</div>
+  <div id=scanPanel style="display:none;margin-top:10px">
+    <div class=row style="margin-bottom:8px">
+      <span style="margin-right:4px">how to decide a hit</span>
+      <span id=scanSignal></span>
+    </div>
+    <div class=hint id=scanSignalHint style="margin-bottom:8px"></div>
+    <div class=row style="margin-bottom:8px">
+      <span style="margin-right:4px">classes to look for</span>
+      <span id=scanCls></span>
+    </div>
+    <div class=row style="margin-bottom:8px">
+      <label>model</label><span id=scanModelSel></span>
+      <label style="margin-left:10px">conf</label>
+      <input id=scanConf type=range min=0.10 max=0.80 step=0.05 value=0.35 style="width:130px"
+        oninput="scanCf.textContent=this.value">
+      <span class=pill id=scanCf>0.35</span>
+      <label style="margin-left:10px">speed</label>
+      <input id=scanSpeed type=range min=1 max=25 step=1 value=8 style="width:110px"
+        oninput="scanSp.textContent=this.value+'x'">
+      <span class=pill id=scanSp>8x</span>
+      <label style="margin-left:10px">scan for</label>
+      <input id=scanDur type=number value=60 min=1 style="width:70px"> min
+      <label style="margin-left:10px" title="a hit only gets saved once it repeats this many times in a row - filters single-frame noise, especially on hsv/disagree">min hits to save</label>
+      <input id=scanMinHits type=number value=2 min=1 style="width:55px">
+    </div>
+    <div class=row>
+      <button class=pri onclick="scanStart()">start scan</button>
+      <button class=dan onclick="scanStop()">stop</button>
+      <span class=pill id=scanSt>idle</span>
+      <span class=pill id=scanPct></span>
+      <span class=pill id=scanHits></span>
+    </div>
+    <div class=hint id=scanErr style="color:var(--bad)"></div>
+    <img class=live id=scanImg style="display:none;margin-top:10px">
+    <div class=hint id=scanFound style="margin-top:8px"></div>
+  </div>
+ </div>
+
+ <div class=card>
+  <h2>Saved moments</h2>
+  <div class=hint>Reopen one here, or send it straight to step 2 to run the model on it.</div>
+  <div class=row style="margin:8px 0"><span id=srcFilters></span></div>
+  <div id=srcList></div>
+ </div>
+</section>
+
+<!-- ============ 2 CAPTURE ============ -->
+<section id=s2>
+ <div class=card>
+  <h2>Watch and capture</h2>
+  <div class=hint>The model runs live. When you see it get something wrong, press the orange button
+  &mdash; it saves the frames leading up to that moment, so you never have to catch it in the act.</div>
+  <div class=row>
+    <input id=liveUrl placeholder="rtsp://..." style="flex:1;font:12px monospace">
+    <button class=pri onclick="liveStart()">start</button>
+    <button class=dan onclick="liveStop()">stop &amp; free GPU</button>
+    <span class=pill id=liveSt>idle</span>
+  </div>
+  <div class=row style="margin-top:10px">
+    <span id=modelBtns></span>
+    <label style="margin:0">conf</label>
+    <input id=conf type=range min=0.05 max=0.9 step=0.05 value=0.35 style="width:150px"
+      oninput="cf.textContent=this.value;liveSet({conf:+this.value})">
+    <span class=pill id=cf>0.35</span>
+    <label style="margin:0">save</label>
+    <input id=bufN type=number value=10 min=1 max=60 style="width:70px"
+      onchange="liveSet({buf_n:+this.value})"> <span class=pill>frames</span>
+    <label style="margin:0">at</label>
+    <input id=bufFps type=number value=1 min=0.2 max=10 step=0.2 style="width:70px"
+      onchange="liveSet({buf_fps:+this.value})"> <span class=pill>fps</span>
+    <span class=pill>buffer <b id=bufN2>0</b></span>
+    <span class=pill>fps <b id=fps>0</b></span>
+    <span class=pill>carried <b id=nCar>0</b></span>
+  </div>
+  <div class=row id=clsCounts style="margin-top:8px"></div>
+ </div>
+ <div class=flex>
+   <div style="flex:1;min-width:700px"><img class=live id=liveImg></div>
+   <div style="width:290px">
+     <div class=card>
+       <button class="big warnbtn" onclick="capture()">SOMETHING IS WRONG</button>
+       <div class=hint style="margin-top:10px">Saves the last <b id=bufDesc>10 frames at 1 fps</b>
+       with the model's masks. Press a second or two after you notice it.</div>
+       <div class=row><span class=pill>captured <b id=nEv>0</b> events</span></div>
+       <div id=capLog style="font-size:12px;color:var(--dim);margin-top:8px"></div>
+     </div>
+   </div>
+ </div>
+</section>
+
+<!-- ============ 3 CORRECT ============ -->
+<section id=s3>
+ <div class=card>
+  <h2>Correct the detections</h2>
+  <div class=hint>Click any outline and say what it really is. Outlines only, never filled, so the
+  sack's true colour stays visible. Leaving one alone means the model was right &mdash; it is kept
+  as is, so every sack in the frame ends up labelled.</div>
+  <div class=row>
+    <button onclick="loadQueue()">refresh</button>
+    <span id=qFilters></span>
+    <span class=pill id=qSumm></span>
+  </div>
+  <div id=qBulk style="margin-top:10px"></div>
+ </div>
+ <div id=qList></div>
+ <div class=row id=qNav style="margin-bottom:20px"></div>
+</section>
+
+<!-- ============ 4 REVIEW LATER ============ -->
+<section id=s3r>
+ <div class=card>
+  <h2>Review later</h2>
+  <div class=hint>Frames you parked from the Correct tab. Nothing here is editable directly &mdash;
+  press "correct this now" (one frame, or all of them) to send a frame back to "not yet judged",
+  where you do the actual correcting.</div>
+  <div class=row><button onclick="loadReviewLater()">refresh</button><span class=pill id=rlSumm></span></div>
+ </div>
+ <div id=rlList></div>
+</section>
+
+<!-- ============ 5 REVIEW + COMMIT ============ -->
+<section id=s4>
+ <div class=card>
+  <h2>Review and add to the dataset</h2>
+  <div class=hint>Everything you judged, grouped. Reject anything that was a misclick.
+  What remains is added directly into whichever dataset version you pick below &mdash; that
+  version is changed in place. Want a safety copy first? Clone it in "Dataset version history"
+  before adding.</div>
+  <div class=row><button onclick="loadReview()">refresh</button><span class=pill id=revSumm></span></div>
+ </div>
+ <div class=card>
+  <h2>Ready to add</h2>
+  <table id=commitTbl></table>
+  <div id=commitBasePick class=row style="margin-top:12px;flex-wrap:wrap"></div>
+  <div class=row style="margin-top:12px">
+    <button class="pri big" style="max-width:420px" onclick="commit()">ADD THESE LABELS TO THE DATASET</button>
+  </div>
+  <div id=commitMsg class=hint style="margin-top:10px"></div>
+ </div>
+ <div id=revList></div>
+ <div class=card>
+  <h2>Dataset version history</h2>
+  <div class=hint>Adding labels changes the picked version in place (above). To branch off instead
+  &mdash; keep an unmodified copy before adding, or just want a fresh version to work in &mdash;
+  clone any version here; nothing about the original is touched. Each row shows what that
+  version has changed by, versus the one before it.</div>
+  <div id=dsVersions></div>
+ </div>
+ <div class=card>
+  <h2>Viewing</h2>
+  <div class=hint id=dsName></div>
+  <table id=dsTbl></table>
+ </div>
+</section>
+
+<!-- ============ 5 HISTORY ============ -->
+<section id=s5>
+ <div class=card>
+  <h2>History</h2>
+  <div class=hint>Frames you're done with. A frame lands here automatically once you add it to
+  the dataset in step 4 (or moved here manually from the Correct tab) &mdash; so step 3 only ever
+  shows what's still active.</div>
+  <div class=row><button onclick="loadHistory()">refresh</button><span id=hFilters></span></div>
+ </div>
+ <div id=hList></div>
+ <div class=row id=hNav style="margin-bottom:20px"></div>
+</section>
+
+<!-- ============ 7 DATASETS ============ -->
+<section id=s6>
+ <div class=card>
+  <h2>Datasets</h2>
+  <div class=hint>Every dataset on disk, real and synthetic, with what it contains and which models
+  were trained on it. Click a row to scroll through its labelled frames &mdash; the outlines are
+  the labels exactly as the training run saw them.</div>
+  <div class=row><button onclick="loadDatasets()">refresh</button>
+    <span id=dsKindFilters></span><span class=pill id=dsCatSumm></span></div>
+  <div class=row style="margin-top:10px">
+    <label style="margin:0">modified</label>
+    <span id=dsQuick></span>
+    <label style="margin:0 0 0 8px">from</label><input type=date id=dsFrom style="width:160px" onchange="dsDateChange()">
+    <label style="margin:0">to</label><input type=date id=dsTo style="width:160px" onchange="dsDateChange()">
+    <button onclick="dsDateClear()">clear</button>
+    <span style="margin-left:auto"></span>
+    <label style="margin:0">sort</label><span id=dsSort></span>
+  </div>
+ </div>
+ <div class=card style="padding:0;overflow:auto"><table id=dsCatTbl></table></div>
+ <div id=dsPreview style="display:none">
+  <div class=card>
+   <div class=row>
+    <h2 style="margin:0" id=dsPvName></h2>
+    <span id=dsPvSplits></span>
+    <span class=pill id=dsPvCount></span>
+    <span style="margin-left:auto"></span>
+    <label style="margin:0">frame width</label>
+    <input id=dsPvW type=range min=220 max=720 step=20 value=440 style="width:120px" oninput="dsResize(+this.value)">
+    <button onclick="dsClose()">close</button>
+   </div>
+   <div class=hint id=dsPvNotes style="margin:8px 0 0"></div>
+   <div class=hint id=dsPvRuns style="margin:4px 0 0"></div>
+  </div>
+  <div id=dsFrames class=grid style="grid-template-columns:repeat(auto-fill,minmax(440px,1fr))"></div>
+  <div id=dsSentinel class=empty style="margin-top:12px">loading&hellip;</div>
+ </div>
+</section>
+<!-- ============ 8 RECORD RTSP ============ -->
+<section id=s7>
+ <div class=card>
+  <h2>Record from RTSP</h2>
+  <div class=hint>Record one or more cameras at the same time, e.g. while a truck is being loaded.
+  Add a row per camera, press <b>start</b>, and press <b>stop</b> when you are done &mdash; each camera
+  becomes its own video file below. Leave <b>fps</b> empty to keep the camera's own frame rate
+  (no re-encoding, lightest on the server); set it (e.g. 5) to save a smaller file at that rate.
+  <b>Frame size</b> works the same way: "original" keeps the camera resolution; a width resizes every frame
+  (height follows the camera's aspect ratio). Changing fps or size re-encodes on the server's CPU.
+  If a stream drops, the camera reconnects on its own and continues in a new part file.</div>
+  <div id=recCams></div>
+  <div class=row style="margin-top:8px">
+   <button onclick="recAdd()">+ add camera</button>
+   <label style="margin:0 0 0 14px">fps</label>
+   <input id=recFps type=number min=0 max=60 step=0.5 placeholder="original" style="width:120px">
+   <label style="margin:0 0 0 14px">frame size</label>
+   <select id=recSize style="width:190px" onchange="recSave();el('recSizeCustom').style.display=this.value==='custom'?'':'none'">
+    <option value="">original (camera's own)</option><option value="1920">1920 wide (1080p)</option>
+    <option value="1280">1280 wide (720p)</option><option value="1024">1024 wide</option>
+    <option value="832">832 wide</option><option value="640">640 wide</option><option value="custom">custom width&hellip;</option></select>
+   <input id=recSizeCustom type=number min=160 max=3840 step=2 placeholder="width px" style="width:110px;display:none" oninput="recSave()">
+   <span style="margin-left:auto"></span>
+   <button class=pri id=recStartBtn onclick="recStart()">start recording</button>
+   <button class=dan id=recStopBtn onclick="recStop()">stop</button>
+  </div>
+  <div class=row style="margin-top:10px"><span class=pill id=recPill>idle</span><span class=hint id=recMsg style="margin:0"></span></div>
+ </div>
+ <div class=card id=recLiveCard style="display:none">
+  <h2>Recording now</h2>
+  <table id=recLiveTbl></table>
+ </div>
+ <div class=card>
+  <div class=row><h2 style="margin:0">Recordings</h2><button onclick="recLoadSessions()">refresh</button></div>
+  <div id=recSessions style="margin-top:10px"></div>
+ </div>
+</section>
+<div id=dsBig onclick="if(event.target===this)this.style.display='none'"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:50;padding:24px;overflow:auto;cursor:zoom-out">
+  <div style="max-width:1600px;margin:0 auto">
+    <div class=row style="margin-bottom:8px;color:var(--dim)"><span id=dsBigName></span><span id=dsBigLabs></span>
+      <button style="margin-left:auto" onclick="el('dsBig').style.display='none'">close</button></div>
+    <canvas id=dsBigCv style="width:100%;cursor:default"></canvas>
+  </div>
+</div>
+</main>
+<script src="/ui.js"></script>

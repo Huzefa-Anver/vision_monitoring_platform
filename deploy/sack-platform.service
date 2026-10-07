@@ -1,0 +1,17 @@
+# systemd user service. Install:
+#   cp deploy/sack-platform.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now sack-platform
+# Edit WorkingDirectory to the repo path. MemoryMax keeps the platform from starving the host.
+[Unit]
+Description=Sack labelling platform
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/sack_labeling_platform
+ExecStart=%h/sack_labeling_platform/run.sh
+Restart=on-failure
+MemoryMax=16G
+MemorySwapMax=0
+
+[Install]
+WantedBy=default.target
