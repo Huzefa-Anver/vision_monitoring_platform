@@ -62,6 +62,19 @@ Model weights are **not** in the repo. The model list is `MODELS` in `core.py` (
 - Only one recording session runs at a time, with at most 16 cameras.
 - Each session's `session.json` keeps the camera links exactly as entered (password included), shown in the Recordings list with a "use these links again" button. Live status and logs mask passwords (`***`). The data folder is git-ignored; keep it private.
 
+## Datasets (tab 7): labelled datasets, raw videos, raw frames
+- **Labelled datasets**: the YOLO datasets under `SACK_PROJECT_ROOT/datasets`. A YOLO `.zip` (`images/`, `labels/`, optional `data.yaml`) can be uploaded; it becomes a new `datasets/<name>_upload_vNNN` with an `upload_manifest.json` and is never merged into a training set.
+- **Raw videos**: `RTSP_VIDEO_DIR`, the tab 8 recordings, and `<data>/raw_videos/` (uploads and videos made from frames, each with a `<name>.json` saying where it came from). ▶ play, *use in Serve RTSP*.
+- **Raw frames**: capture events (`<data>/captures/`), saved frames (`<data>/frames/`), uploaded sets (`<data>/raw_frames/<set>/`, images or a zip of images) and the image splits of labelled datasets. Tick sets and **make video** (each frame held N s at 5 fps, or N frames per second; other picture sizes get black bars) to serve them as RTSP.
+- Uploads are streamed to disk, never overwrite an existing name, keep 5 GB free, and zips are unpacked with every path checked (images / labels / yaml only).
+- Every uploaded or made set is checked against the benchmark images (`eval/v21_hard_pilot_v001`, by md5) and the reserved eval days in `eval/EVAL_RESERVED.json`; hits are shown as a warning. Frames captured from a stream made of benchmark frames must never be used for training.
+- Only uploads and videos made here can be deleted from the page.
+
+## Serve RTSP (tab 12)
+- MediaMTX in Docker (`RTSP_CONTAINER`, port `RTSP_PORT`, published on `RTSP_HOST`), config written to `<data>/rtsp_serve/live/` and hot-reloaded; only changed streams restart.
+- Per stream: start on connect or always playing; at the end stop / loop / freeze then stop / freeze then loop; start and end point (picked in a player); re-encode; sync group (streams in one group are one ffmpeg: they start, loop and freeze together).
+- Loops that start inside a video play a frame-exact clip cut once into `<data>/rtsp_serve/live/clips/` (never deleted automatically).
+
 ## Security notes
 - `data/state/sources.json` contains RTSP links **with credentials**. `data/` is git-ignored; never commit it.
 - The server has no authentication. Run it on a trusted LAN only, or behind a reverse proxy with auth.

@@ -40,7 +40,8 @@ SHORT={0:"red",1:"green",2:"blue",3:"yellow",4:"white",5:"red_grey",6:"sack"}
 COL={0:(60,60,220),1:(60,200,60),2:(255,140,0),3:(0,215,255),
      4:(245,245,245),5:(150,150,190),
      6:(255,0,255)}   # 6 = DISPLAY-ONLY 'sack' (class-agnostic synthetic models); not a labelling class, not in NAMES/export
-MODELS={"v21":"models/sack_seg_v21_real_best.pt",   # v19 labels, same recipe as v20 (2026-09-10) - chosen as production model; bench-best conf 0.40, fewest FP at 0.45
+MODELS={"v30A":"runs/sack-seg-v30-shoulder-mix/weights/best.pt",   # run A (2026-10-26): v21 + 552 synthetic blue shoulder stacks, 30 epochs, seed 0; = Triton yolo_v30a. Blue 164/177 vs v21 151 on the human benchmark; suggested conf 0.40
+        "v21":"models/sack_seg_v21_real_best.pt",   # v19 labels, same recipe as v20 (2026-09-10) - chosen as production model; bench-best conf 0.40, fewest FP at 0.45
         "v20":"models/sack_seg_v20_real_best.pt",   # v18 labels, correct recipe (2026-09-09); prod conf 0.45
         "v18":"models/sack_seg_v18_best.pt",
         "v13":"models/sack_seg_v13_best.pt",
@@ -72,19 +73,9 @@ MODELS={"v21":"models/sack_seg_v21_real_best.pt",   # v19 labels, same recipe as
         # outfits + paired mannequin-only negatives, Poisson seam band, post-paste degradation, 10k composites on real ch3
         # plates (2026-09-19, run sack-seg-v28-s0, best.pt = epoch 36 by synthetic split). Real val AP50 0.040, stacked 4/50,
         # singles 0/79, 0 false alarms. Stacks only; singles/trolleys/hands untrained.
-        "v28_synth_blue":"models/sack_seg_v28_synth_blue_ep36.pt",
-        # EXPERIMENTAL - 100% SYNTHETIC, ONE class-agnostic 'sack' (no seam colour). Test S: full Isaac v006 replica-room renders,
-        # EVERY sack labelled (2026-09-23, 500 frames, COCO init, epoch 10). Best synthetic-only model: 315/413 real sacks @0.25.
-        # Fires on stored piles too (they are labelled sacks in its training). Shown as magenta 'sack' (display id 6). Watch-only.
-        "TestS_allsack_synth":"runs/diag-fullscene-v001-sall/weights/pilot_epoch10.pt",
-        # EXPERIMENTAL - 100% SYNTHETIC, class-agnostic 'sack'. Hybrid v1: Test S frames with people/room repainted by FLUX.1-Canny,
-        # rendered sack pixels kept (2026-09-29, 112 frames, 5 epochs, seed 0). 227/413 real @0.25; not reliably better than plain
-        # renders across seeds. Magenta 'sack'. Watch-only.
-        "hybridv1_allsack_synth":"runs/hybrid-v1-pilot5-H/weights/pilot_epoch5.pt",
-        # EXPERIMENTAL - 100% SYNTHETIC, class-agnostic 'sack', CARRIED-ONLY labels (stored/floor/truck sacks = background) on the
-        # hybrid v1 frames (FLUX people/room, rendered sacks; 2026-09-30, 112 frames, 150 carried sacks, 5 epochs, seed 0 = best of 3).
-        # 172/413 real @0.25, ~0 detections on stored piles; other seeds 23 and 155 (unstable). Magenta 'sack'. Watch-only.
-        "hybridv1_carried_synth":"runs/hybrid-v1-carried-H-s0/weights/pilot_epoch5.pt"}
+        "v28_synth_blue":"models/sack_seg_v28_synth_blue_ep36.pt"}
+        # 2026-11-13: TestS_allsack_synth, hybridv1_allsack_synth and hybridv1_carried_synth removed with their runs
+        # (synthetic cleanup, eval/cleanup_synthetic_v001).
 
 def single_class_remap(m):
     """A one-class checkpoint reports class 0. Map it to that class's id in NAMES so the platform names/colours it right."""
@@ -174,6 +165,30 @@ def build_playback_url(base, dt):
     return f"{base}{sep}starttime={t}"
 
 # ---------- step 3: correction queue ----------
+_SIZE_CACHE={}      # image path -> (mtime_ns, w, h)
+_EVT_CACHE={}       # event.json path -> (mtime_ns, parsed event)
+def _img_size(p):
+    """Width/height from the JPEG header (PIL, lazy) - no full decode. Cached per file mtime."""
+    try: st=p.stat().st_mtime_ns
+    except OSError: return None
+    c=_SIZE_CACHE.get(str(p))
+    if c and c[0]==st: return c[1],c[2]
+    try:
+        from PIL import Image
+        with Image.open(p) as im: w,h=im.size
+    except Exception:
+        im=cv2.imread(str(p))
+        if im is None: return None
+        h,w=im.shape[:2]
+    _SIZE_CACHE[str(p)]=(st,w,h); return w,h
+
+def _event(f):
+    try: st=f.stat().st_mtime_ns
+    except OSError: return None
+    c=_EVT_CACHE.get(str(f))
+    if c and c[0]==st: return c[1]
+    e=jload(f,None); _EVT_CACHE[str(f)]=(st,e); return e
+
 def _load_frame_items(want):
     """Shared loader: every captured frame with detections, filtered by `want(fid)`.
     Used both for the active correction queue and for the History archive - same
@@ -184,7 +199,7 @@ def _load_frame_items(want):
     for d in sorted(CAP.iterdir()):
         f=d/"event.json"
         if not f.exists(): continue
-        e=jload(f,None)
+        e=_event(f)
         if not e or e["id"] in hid: continue
         for m in e["frames_meta"]:
             if not m["dets"]: continue
@@ -194,9 +209,9 @@ def _load_frame_items(want):
             if not src.exists(): continue
             dst=FR/f"{e['id']}_{m['i']:02d}.jpg"
             if not dst.exists(): shutil.copy(src,dst)
-            im=cv2.imread(str(dst))
-            if im is None: continue
-            h,w=im.shape[:2]
+            sz=_img_size(dst)
+            if sz is None: continue
+            w,h=sz
             items.append(dict(id=fid,img=dst.name,W=w,H=h,event=e["id"],frame=m["i"],
                               t=m["t"],model=e.get("model","?"),conf=e.get("conf",0),
                               source=e.get("source",""),tag=e.get("tag",""),
@@ -213,8 +228,10 @@ def scan_queue():
     fin=set(jload(ST/"finalized.json",[]))
     arc=set(jload(ST/"archived_frames.json",[]))
     items=_load_frame_items(lambda fid: fid not in fin and fid not in arc)
-    jsave(ST/"queue.json",items)
+    if items!=_QUEUE_SAVED.get("items"):          # rewrite the 2.6 MB queue.json only when it changed
+        jsave(ST/"queue.json",items); _QUEUE_SAVED["items"]=items
     return items
+_QUEUE_SAVED={}
 
 # ---------- History: frames the user is done with (committed, or manually archived) ----------
 def archive_frames(fids, action="archived", **extra):
@@ -653,6 +670,10 @@ def dataset_catalog():
                 # images/val is the normal case and not reported
                 m=re.search(r"datasets/([^/]+)/",v) if v else None
                 if m and m.group(1)!=d.name: rec["val_from"]=m.group(1)
+            um=d/"upload_manifest.json"          # uploaded through tab 7: keep its origin and benchmark check visible
+            if um.is_file():
+                try: rec["upload"]=json.loads(um.read_text())
+                except Exception: rec["upload"]={"rule":"upload_manifest.json unreadable"}
             rec["runs"]=[dict(r,platform_model=_run_platform_name(r["run"]),bench=_run_bench(r["run"],bench))
                          for r in runs if r["dataset"]==d.name]
             items.append(rec)

@@ -120,7 +120,7 @@ canvas{border-radius:8px;display:block;cursor:crosshair;max-width:100%}
     <button onclick="pvSeek(300)">5 min &raquo;</button>
     <button onclick="pvSeek(1800)">30 min &raquo;</button>
   </div>
-  <img class=live id=pvImg src="/preview">
+  <img class=live id=pvImg>
  </div>
 
  <div class=card>
@@ -316,6 +316,12 @@ canvas{border-radius:8px;display:block;cursor:crosshair;max-width:100%}
 
 <!-- ============ 7 DATASETS ============ -->
 <section id=s6>
+ <div class=row style="margin-bottom:10px" id=dsTabs>
+  <button id=dsTabLab class=on onclick="dsTab('lab')">Labelled datasets</button>
+  <button id=dsTabV onclick="dsTab('v')">Raw videos</button>
+  <button id=dsTabF onclick="dsTab('f')">Raw frames</button>
+ </div>
+ <div id=dsLab>
  <div class=card>
   <h2>Datasets</h2>
   <div class=hint>Every dataset on disk, real and synthetic, with what it contains and which models
@@ -350,6 +356,60 @@ canvas{border-radius:8px;display:block;cursor:crosshair;max-width:100%}
   </div>
   <div id=dsFrames class=grid style="grid-template-columns:repeat(auto-fill,minmax(440px,1fr))"></div>
   <div id=dsSentinel class=empty style="margin-top:12px">loading&hellip;</div>
+ </div>
+ <div class=card><h2>Upload a labelled dataset</h2>
+  <div class=hint>A <b>.zip</b> in YOLO layout: <code>images/</code> and <code>labels/</code> (split folders such as train/val inside, optional
+  <code>data.yaml</code>), at the top of the zip or inside one folder. It becomes a new folder <code>datasets/&lt;name&gt;_upload_vNNN</code>;
+  nothing existing is changed and it is not merged into any training set. Every image is checked against the benchmark
+  (same file content, or a reserved eval day in the name) and the result is shown on the dataset.</div>
+  <div class=row style="margin-top:8px"><label style="margin:0">name</label><input id=upDsName placeholder="e.g. gate_extra" style="width:14em">
+   <input type=file id=upDsFile accept=".zip" style="width:auto"><button onclick="upDataset()">upload</button><span id=upDsMsg class=hint style="margin:0"></span></div>
+ </div>
+ </div>
+ <div id=dsRawV style="display:none">
+  <div class=card><h2>Raw videos</h2>
+   <div class=hint>Every video the platform can play or serve: the RTSP video folder, the recordings from tab 8, uploads and
+   videos made from frames. <b>use in Serve RTSP</b> adds it as a new stream in tab 12. Only uploads and videos made here can be deleted.</div>
+   <div class=row style="margin-top:8px"><button onclick="rvLoad()">refresh</button><span id=rvFilt></span><span id=rvSumm class=pill></span>
+    <span style="margin-left:auto"></span><input type=file id=upVidFile accept="video/*,.mkv,.ts" multiple style="width:auto"><button onclick="upVideos()">upload video(s)</button></div>
+   <div id=upVidMsg class=hint style="margin:6px 0 0"></div>
+  </div>
+  <div class=card style="padding:0;overflow:auto"><table id=rvTbl></table></div>
+ </div>
+ <div id=dsRawF style="display:none">
+  <div class=card><h2>Raw frames</h2>
+   <div class=hint>Frame sets: capture events (tab 2, about 10 frames at 1 per second each), saved frames, uploaded sets and the image
+   folders of labelled datasets. Tick sets and press <b>make video</b> to turn them into a video for Serve RTSP; the frames are not changed.</div>
+   <div class=row style="margin-top:8px"><button onclick="rfLoad(true)">refresh</button><span id=rfFilt></span>
+    <input id=rfQ placeholder="search" style="width:12em" oninput="rfDraw()"><span id=rfSumm class=pill></span></div>
+   <div class=row style="margin-top:8px"><label style="margin:0">upload a frame set: name</label><input id=upFrName placeholder="e.g. gate_night" style="width:12em">
+    <input type=file id=upFrFile accept="image/*,.zip" multiple style="width:auto"><button onclick="upFrames()">upload</button>
+    <span class=hint style="margin:0">many images, or one .zip of images</span></div>
+   <div class=row style="margin-top:6px">
+    <label style="margin:0;display:flex;gap:5px;align-items:center;color:var(--ink)" title="a zip with folders (cam2/, cam3/, ...) becomes one frame set, one video and one Serve RTSP stream per folder"><input type=checkbox id=upAuto checked style="width:auto">zip with folders: one RTSP stream per folder</label>
+    <label style="margin:0;display:flex;gap:5px;align-items:center;color:var(--ink)" title="one sync group: always playing, looping, all cameras start and loop together (trimmed to the shortest folder)"><input type=checkbox id=upTogether checked style="width:auto">play them together (sync group)</label>
+    <select id=upMode style="width:auto" onchange="el('upUnit').textContent=this.value==='rate'?'frames/s':'s';el('upVal').value=this.value==='rate'?5:1"><option value=hold>show each frame for</option><option value=rate>play frames per second:</option></select>
+    <input id=upVal type=number value=1 min=0.04 step=0.1 style="width:5em"><span class=hint style="margin:0" id=upUnit>s</span></div>
+   <div id=upFrMsg class=hint style="margin:6px 0 0"></div>
+  </div>
+  <div id=mvBox class=card style="display:none;border-color:var(--accent)">
+   <h2 style="margin:0 0 6px">Make a video from <span id=mvCount></span></h2>
+   <div class=row><label style="margin:0">name</label><input id=mvName style="width:16em" oninput="mvEst()">
+    <label style="margin:0 0 0 10px;display:flex;gap:5px;align-items:center;color:var(--ink)"><input type=radio name=mvMode value=hold checked style="width:auto" onchange="mvEst()">show each frame for</label>
+    <input id=mvHold type=number value=1 min=0.04 step=0.1 style="width:5em" oninput="mvEst()"><label style="margin:0">s</label>
+    <label style="margin:0 0 0 10px;display:flex;gap:5px;align-items:center;color:var(--ink)"><input type=radio name=mvMode value=rate style="width:auto" onchange="mvEst()">play</label>
+    <input id=mvFps type=number value=5 min=0.1 max=60 step=1 style="width:5em" oninput="mvEst()"><label style="margin:0">frames per second</label>
+    <label style="margin:0 0 0 10px">order</label><select id=mvOrder style="width:auto"><option value=name>as listed (by set, then name)</option><option value=time>by file time</option></select></div>
+   <div class=row style="margin-top:6px"><span id=mvEst class=hint style="margin:0"></span><span style="margin-left:auto"></span>
+    <button onclick="mvClear()">clear selection</button>
+    <label style="margin:0;display:flex;gap:5px;align-items:center;color:var(--ink)" title="for one-video-per-set: one sync group, always playing, looping, trimmed to the shortest set"><input type=checkbox id=mvTogether style="width:auto">together</label>
+    <button onclick="mvAuto()" title="one video per ticked set, each added as its own Serve RTSP stream">one video + RTSP stream per set</button>
+    <button class=pri onclick="mvMake()">make one video of all</button></div>
+   <div id=mvMsg class=hint style="margin:6px 0 0"></div>
+  </div>
+  <div class=card style="padding:0;overflow:auto"><table id=rfTbl></table></div>
+  <div id=rfPv class=card style="display:none"><div class=row><b id=rfPvName></b><span id=rfPvN class=pill></span><span style="margin-left:auto"></span><button onclick="el('rfPv').style.display='none'">close</button></div>
+   <div id=rfPvGrid class=grid style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-top:8px"></div></div>
  </div>
 </section>
 <!-- ============ 8 RECORD RTSP ============ -->
@@ -389,6 +449,145 @@ canvas{border-radius:8px;display:block;cursor:crosshair;max-width:100%}
   <div id=recSessions style="margin-top:10px"></div>
  </div>
 </section>
+<!-- ============ 9 EVAL EVENTS ============ -->
+<section id=s8>
+ <div class=card>
+  <div class=row><h2 style="margin:0">Eval events</h2><span class=pill id=evalCount></span>
+   <label style="margin:0 0 0 14px"><input type=checkbox checked onchange="evalToggleV21(this)"> show v21 prediction</label>
+   <button style="margin-left:auto" onclick="evalLoad()">refresh</button></div>
+  <div class=hint>Verified evaluation events. These frames and their whole days are <b>never used for training</b>.
+  Times are the recorder's on-screen clock (real PKT + 1 h). The playback link opens the clip on the recorder
+  (VLC: Media &rarr; Open Network Stream).</div>
+  <h3 style="margin:12px 0 6px">RTSP sources used for the benchmark</h3>
+  <div id=evalSources></div>
+  <h3 style="margin:12px 0 6px">Reserved for evaluation</h3>
+  <div id=evalReserved></div>
+ </div>
+ <div id=evalList></div>
+ <div id=evalCands></div>
+</section>
+<!-- ============ 10 BENCHMARK ============ -->
+<section id=s9>
+ <div class=card>
+  <div class=row><h2 style="margin:0">Benchmark</h2><span class=pill id=benchFrames></span><button style="margin-left:auto" onclick="benchLoad()">refresh</button></div>
+  <div class=hint>Runs a model on every frame you approved in the Eval events tab and scores it against your labels
+  (a sack is found when the predicted outline overlaps the labelled one by at least 0.5). Frames without labels are run but not scored.</div>
+  <div class=row style="margin-top:8px"><label style="margin:0">model</label><select id=benchModel style="width:220px"></select>
+   <label style="margin:0 0 0 14px">confidence</label><input id=benchConf type=number min=0.01 max=0.99 step=0.05 value=0.25 style="width:90px">
+   <button class=pri onclick="benchRun()">run</button><span class=pill id=benchStatus>idle</span></div>
+ </div>
+ <div class=card><h2>Results</h2><div id=benchTable></div></div>
+ <div class=card><h2>Type B frames by what v21 got wrong</h2><div id=benchBErr></div></div>
+ <div id=benchView></div>
+</section>
+<!-- ============ 11 NVR RECORDINGS ============ -->
+<section id=s10>
+ <div class=card>
+  <h2 style="margin:0">Test streams</h2>
+  <div class=hint style="margin:0">Saved videos served as RTSP are now set up in tab <a href="#" onclick="show('s11');return false">12 Serve videos as RTSP</a>. Those streams ignore starttime, so do not use them in the check below.</div>
+ </div>
+ <div class=card>
+  <h2 style="margin:0">Which recordings exist</h2>
+  <div class=hint>Paste a camera's playback link, for example <code>rtsp://user:pass@host:port/cam/playback?channel=5</code>, and pick a time range.
+  The recorder is asked for video at each step, one time at a time with a short pause. RTSP cannot list recordings, so this is a probe:
+  a gap shorter than the step can be missed. The check stops at the first login failure, so a wrong password cannot lock the account.
+  Check the clock printed on each thumbnail: on some recorders it differs from the requested time, and a request inside a gap may jump to the next recording.</div>
+  <div class=row style="margin-top:8px"><input id=avUrl placeholder="rtsp://... playback link" style="flex:1;min-width:260px"></div>
+  <div class=row style="margin-top:8px">
+   <label style="margin:0">from</label><input id=avStart type=datetime-local>
+   <label style="margin:0">to</label><input id=avEnd type=datetime-local>
+   <label style="margin:0">every</label><select id=avStep><option value=60 selected>1 hour</option><option value=30>30 min</option><option value=15>15 min</option></select>
+   <label style="margin:0"><input type=checkbox id=avRecheck> check again (ignore saved)</label>
+   <button class=pri onclick="avStart()">check</button><button onclick="avStart(true)" title="Probe every time again, ignoring saved results">recheck</button><button onclick="avStop()">stop</button><span class=pill id=avStatus>idle</span></div>
+  <div id=avRanges style="margin-top:10px"></div>
+  <h3 style="margin:14px 0 6px">Saved results</h3><div class=hint>Every check is saved (the password is never stored). Click a link to show everything saved for it.</div><div id=avLinks></div>
+ </div>
+ <div id=avList></div>
+</section>
+<!-- ============ 12 SERVE VIDEOS AS RTSP ============ -->
+<section id=s11>
+ <div class=card>
+  <h2 style="margin:0">RTSP server <span id=rsSrv class=pill>...</span></h2>
+  <div class=hint>Plays saved video files as RTSP camera streams, for testing the counter on known videos. Set each stream below, then press
+  <b>Save and apply</b>: the server picks up the change by itself, a changed stream restarts (its viewers are disconnected) and the others keep playing.
+  <b>Restart server</b> disconnects every viewer. Videos come from <code id=rsDir></code> (copy new ones there, for example with scp, and press <b>reload videos</b>) and from the recordings made in tab 8 (rename them there; streams follow the new name).</div>
+  <div class=row>
+   <button class=pri onclick="rsSave()">Save and apply</button>
+   <button onclick="rsRestart()">Restart server</button>
+   <button id=rsPauseBtn onclick="rsPause()" title="stop every stream's player to free CPU and memory; all settings are kept">&#9208; Pause all streams</button>
+   <button class=dan onclick="rsStop()" title="shut down the RTSP server itself (frees everything); Restart server starts it again">Shut down RTSP server</button>
+   <button onclick="rsLogs()">server log</button>
+   <span id=rsMsg class=hint style="margin:0"></span>
+  </div>
+  <div class=row style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px">
+   <b>Viewer login</b>
+   <label style="margin:0">user</label><input id=rsAuU style="width:9em" autocomplete=off>
+   <label style="margin:0">password</label><input id=rsAuP type=password style="width:11em" autocomplete=new-password placeholder="(unchanged)" title="4-64 letters, digits or . _ - ~">
+   <label style="margin:0;display:flex;gap:4px;align-items:center"><input type=checkbox style="width:auto" onchange="el('rsAuP').type=this.checked?'text':'password'">show</label>
+   <button onclick="rsAuthSave()">save login</button>
+   <span id=rsAuMsg class=hint style="margin:0"></span>
+   <div class=hint style="width:100%;margin:2px 0 0">One user name and password for every stream that ticks <b>password</b> on its card; the link and copy button
+    of those streams include it. Streams without the tick can be watched without a password, from the local network only. Anyone who can open
+    this platform page can see the password.</div>
+  </div>
+  <div class=row style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px">
+   <b>Public address</b>
+   <label style="margin:0">address</label><input id=rsPbH style="width:11em" placeholder="203.215.168.66">
+   <label style="margin:0">port</label><input id=rsPbP type=number min=1 max=65535 style="width:6em" placeholder="8554">
+   <button onclick="rsPubSave()">save address</button>
+   <span id=rsPbMsg class=hint style="margin:0"></span>
+   <div class=hint style="width:100%;margin:2px 0 0">For streams that tick <b>public</b> on their card (they must also tick password). The router must forward
+    this port (TCP) to <b>10.1.1.147:8554</b>; this page cannot change the router. A stream without the public tick refuses viewers from
+    outside the local network, even if the router forwards the port.</div>
+  </div>
+  <pre id=rsLog style="display:none;max-height:300px;overflow:auto;background:#0b0e12;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;white-space:pre-wrap"></pre>
+ </div>
+ <div class=card>
+  <h2 style="margin:0">Streams <span id=rsDirty class=pill style="display:none">unsaved changes</span></h2>
+  <div class=hint>Each stream is one video file and how it is played. URL = <code id=rsAddr>rtsp://&hellip;:8554/</code> + name. <span id=rsAuHint>Tick password / public on a card to protect or publish that stream.</span></div>
+  <div id=rsList></div>
+  <div class=row style="margin-top:8px"><select id=rsAddFile style="max-width:420px"></select><button onclick="rsAdd()">+ add stream</button></div>
+ </div>
+ <div class=card>
+  <h2 style="margin:0">Videos in the folder <button style="padding:3px 10px;margin-left:8px" onclick="rsVideos(true)">reload videos</button></h2>
+  <div id=rsVids class=hint style="margin-top:6px">...</div>
+ </div>
+</section>
+<div id=rpBox onclick="if(event.target===this)rpClose()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:60;padding:18px;overflow:auto">
+  <div style="max-width:1500px;margin:0 auto">
+    <div class=row style="margin-bottom:8px"><b id=rpName></b><span id=rpMode class=pill></span><span id=rpInfo class=hint style="margin:0"></span>
+      <button style="margin-left:auto" onclick="rpClose()">close</button></div>
+    <video id=rpVid controls autoplay playsinline style="width:100%;max-height:78vh;background:#000;border-radius:8px"></video>
+    <div id=rpConv class=row style="margin-top:8px;display:none">
+      <div style="width:100%;display:flex;gap:10px;align-items:center">
+        <button id=rpPP style="min-width:3.2em;font-size:16px" onclick="rpPP()" title="play / pause">&#9208;</button>
+        <span id=rpT class=pill style="white-space:nowrap;font-variant-numeric:tabular-nums"></span>
+        <input id=rpBar type=range min=0 max=1 step=1 value=0 style="flex:1;min-width:200px;padding:0" title="drag to any moment of the whole video"
+          oninput="RP.drag=true;el('rpT').textContent=rpFmt(+this.value)+' / '+(RP.dur?rpFmt(RP.dur):'?')" onchange="RP.drag=false;rpLoad(+this.value)"></div>
+      <span class=hint style="margin:0">Converted for this browser; drag the bar or jump:</span>
+      <button onclick="rpJump(-600)">&minus;10 min</button><button onclick="rpJump(-60)">&minus;1 min</button><button onclick="rpJump(-10)">&minus;10 s</button>
+      <button onclick="rpJump(10)">+10 s</button><button onclick="rpJump(60)">+1 min</button><button onclick="rpJump(600)">+10 min</button>
+      <label style="margin:0 0 0 10px">go to</label><input id=rpAt placeholder="h:mm:ss" style="width:8em" onkeydown="if(event.key==='Enter')rpGo()"><button onclick="rpGo()">go</button>
+      <label style="margin:0 0 0 10px">size</label><select id=rpW style="width:auto" onchange="rpLoad(rpNow())"><option>640</option><option selected>1280</option><option>1920</option></select>
+      <span id=rpAbs class=pill></span></div>
+    <div id=rpPick class=row style="margin-top:10px;display:none;padding:10px;border:1px solid var(--accent);border-radius:9px">
+      <b>Serve only part of this video:</b>
+      <button onclick="rpMark('skip_s')" style="font-weight:700">&#9204; start here</button>
+      <button onclick="rpMark('end_s')" style="font-weight:700">end here &#9205;</button>
+      <span id=rpRange class=pill></span>
+      <button onclick="rpSeek(RSS[RP.pick].skip_s)">go to start</button>
+      <button onclick="rpSeek(Math.max(0,(RSS[RP.pick].end_s||RP.dur||0)-5))">go to 5 s before end</button>
+      <button onclick="rpMarkClear()">play to the end of the video</button>
+      <button onclick="rsPartAdd(RP.pick)" style="font-weight:700;border-color:var(--accent)" title="keep start..end as one part; mark the next part and add it too">+ add as part</button>
+      <button class=pri onclick="rpClose()" style="margin-left:auto">done</button>
+      <div id=rpParts style="width:100%"></div>
+      <div class=hint style="width:100%;margin:4px 0 0">Play or drag to a moment, then press start here / end here. For one part, that is all. For several parts of this
+       video played one after another, press <b>+ add as part</b> after each one and put them in order with &#9650; &#9660;. Then press <b>Save and apply</b> in the Serve RTSP tab.</div></div>
+    <div class=row style="margin-top:6px"><button id=rpSwitch style="font-size:12px;padding:4px 10px" onclick="rpSwitch()"></button>
+      <a id=rpDl style="color:var(--accent);font-size:13px">download</a></div>
+  </div>
+</div>
 <div id=dsBig onclick="if(event.target===this)this.style.display='none'"
   style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:50;padding:24px;overflow:auto;cursor:zoom-out">
   <div style="max-width:1600px;margin:0 auto">

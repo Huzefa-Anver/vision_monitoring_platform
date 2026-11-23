@@ -3,7 +3,8 @@ import json, os, sys, shutil, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parent))
-import core as C, capture as CAPMOD, preview as PV, scan as SCAN, recorder as REC
+import core as C, capture as CAPMOD, preview as PV, scan as SCAN, recorder as REC, evalset as EV, benchmark as BM, availability as AV
+import rtsp_serve as RS, recplay as RP, media as MD
 from config import STATIC_DIR, PORT
 import numpy as np
 
@@ -17,15 +18,34 @@ def html():
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
     def _j(self,o,code=200):
-        b=json.dumps(o).encode()
+        b=json.dumps(o,separators=(",",":")).encode()
+        gz=len(b)>16384 and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:
+            import gzip; b=gzip.compress(b,compresslevel=5)
         self.send_response(code); self.send_header("Content-Type","application/json")
+        if gz: self.send_header("Content-Encoding","gzip")
+        self.send_header("Cache-Control","no-store")
         self.send_header("Content-Length",str(len(b))); self.end_headers(); self.wfile.write(b)
     def _img(self,p):
         p=Path(p)
         if not p.exists(): return self.send_error(404)
         d=p.read_bytes()
+        et='"%x-%x"'%(p.stat().st_mtime_ns,len(d))
+        if self.headers.get("If-None-Match")==et:
+            self.send_response(304); self.send_header("ETag",et); self.end_headers(); return
         self.send_response(200); self.send_header("Content-Type","image/jpeg")
+        self.send_header("ETag",et); self.send_header("Cache-Control","private, max-age=600")
         self.send_header("Content-Length",str(len(d))); self.end_headers(); self.wfile.write(d)
+
+    def _static(self,data,ctype):
+        """Page + script: always revalidated (ETag) so a browser never mixes an old ui.js with a new page."""
+        import hashlib
+        et='"%s"'%hashlib.md5(data).hexdigest()[:16]
+        if self.headers.get("If-None-Match")==et:
+            self.send_response(304); self.send_header("ETag",et); self.end_headers(); return
+        self.send_response(200); self.send_header("Content-Type",ctype)
+        self.send_header("Cache-Control","no-cache"); self.send_header("ETag",et)
+        self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
 
     def do_GET(self):
         path,_,qs=self.path.partition("?")
@@ -44,10 +64,7 @@ class H(BaseHTTPRequestHandler):
                     time.sleep(0.08)
             except Exception: return
         if path=="/ui.js":
-            d=(STATIC_DIR/"ui.js").read_bytes()
-            self.send_response(200); self.send_header("Content-Type","application/javascript")
-            self.send_header("Content-Length",str(len(d))); self.end_headers()
-            self.wfile.write(d); return
+            return self._static((STATIC_DIR/"ui.js").read_bytes(),"application/javascript")
         if path.startswith("/img/"): return self._img(ROOT/"frames"/path[5:])
         if path.startswith("/scanimg/"): return self._img(SCAN.EVID_DIR/path[9:])
         if path.startswith("/crop/"):
@@ -109,25 +126,101 @@ class H(BaseHTTPRequestHandler):
         if path=="/api/dataset": return self._j(C.dataset_state(Q.get("name")))
         if path=="/api/dataset/versions":
             return self._j(dict(versions=C.dataset_versions(),latest=C.dataset_rel().rsplit("/",1)[-1]))
+        # ---- Eval events tab ----
+        if path=="/api/eval/events": return self._j(EV.events())
+        if path=="/api/eval/sessions": return self._j(EV.sessions())
+        if path=="/api/eval/sources": return self._j(EV.rtsp_sources())
+        if path=="/api/bench/status": return self._j(BM.status())
+        if path=="/api/bench/results": return self._j(BM.results())
+        if path.startswith("/benchfile/"):
+            f=BM.file_path(*path[11:].split("/"))
+            if f is None: return self.send_error(404)
+            return self._img(f)
+        if path.startswith("/evalfile/") or path.startswith("/evalsess/"):
+            kind="events" if path.startswith("/evalfile/") else "sessions"
+            parts=path[10:].split("/")
+            f=EV.file_path(*parts,kind=kind) if len(parts)>=3 else None
+            if f is None: return self.send_error(404)
+            ct={".jpg":"image/jpeg",".png":"image/png",".mp4":"video/mp4"}.get(f.suffix.lower(),"application/octet-stream")
+            size=f.stat().st_size; rng=self.headers.get("Range")
+            if rng and rng.startswith("bytes="):          # browsers seek in videos with Range requests
+                a,_,b=rng[6:].partition("-"); a=int(a or 0); b=int(b) if b else size-1; b=min(b,size-1)
+                self.send_response(206); self.send_header("Content-Range",f"bytes {a}-{b}/{size}")
+            else:
+                a,b=0,size-1; self.send_response(200)
+            self.send_header("Content-Type",ct); self.send_header("Accept-Ranges","bytes")
+            self.send_header("Cache-Control","private, max-age=600")
+            self.send_header("Content-Length",str(b-a+1)); self.end_headers()
+            try:
+                with open(f,"rb") as fh:
+                    fh.seek(a); left=b-a+1
+                    while left>0:
+                        chunk=fh.read(min(1<<20,left))
+                        if not chunk: break
+                        self.wfile.write(chunk); left-=len(chunk)
+            except Exception: pass
+            return
+        if path=="/api/avail/status": return self._j(AV.status())
+        if path=="/api/avail/links": return self._j(AV.links())
+        if path=="/api/avail/teststreams": return self._j(AV.test_streams())
+        if path=="/api/rtsp/status": return self._j(RS.status())
+        if path=="/api/rtsp/auth": return self._j(RS.auth(full=True))
+        if path=="/api/rtsp/videos": return self._j(RS.videos())
+        if path=="/api/rtsp/logs": return self._j(RS.logs())
         if path=="/api/rec/status": return self._j(REC.status())
         if path=="/api/rec/sessions": return self._j(REC.sessions())
-        if path.startswith("/rec/"):
+        if path.startswith("/rec/"):          # download, or ?play=1 for the in-page player (seekable, not a download)
             parts=path[5:].split("/")
             f=REC.file_path(*parts) if len(parts)==2 else None
             if f is None: return self.send_error(404)
-            self.send_response(200)
-            self.send_header("Content-Type","video/mp4" if f.suffix==".mp4" else "text/plain")
-            self.send_header("Content-Length",str(f.stat().st_size))
-            self.send_header("Content-Disposition",f'attachment; filename="{parts[0]}_{f.name}"')
-            self.end_headers()
-            try:
-                with open(f,"rb") as fh:
-                    while True:
-                        b=fh.read(1<<20)
-                        if not b: break
-                        self.wfile.write(b)
-            except Exception: pass
+            RP.send_file(self,f,"video/mp4" if f.suffix==".mp4" else "text/plain",None if Q.get("play")=="1" else f"{parts[0]}_{f.name}")
             return
+        if path.startswith("/recplay/"):      # the same video converted to H.264 on the fly from ?t= seconds
+            parts=path[9:].split("/")
+            f=REC.file_path(*parts) if len(parts)==2 else None
+            if f is None or f.suffix!=".mp4": return self.send_error(404)
+            try: t=float(Q.get("t",0)); w=int(Q.get("w",1280))
+            except ValueError: return self.send_error(400)
+            RP.send_converted(self,f,t,w); return
+        if path=="/api/raw/videos": return self._j(MD.videos())
+        if path=="/api/raw/frames": return self._j(MD.frame_sets())
+        if path=="/api/raw/frames/list": return self._j(MD.set_list(Q.get("id","")))
+        if path=="/api/raw/job": return self._j(MD.job())
+        if path=="/raw/frame":               # one image of a frame set; ?w=240 for a small thumbnail
+            i=int(Q.get("i","0")) if Q.get("i","0").isdigit() else 0
+            if Q.get("w","").isdigit():
+                try: b=MD.thumb(Q.get("id",""),i,int(Q["w"]))
+                except Exception: b=None
+                if b is None: return self.send_error(404)
+                self.send_response(200); self.send_header("Content-Type","image/jpeg"); self.send_header("Content-Length",str(len(b)))
+                self.send_header("Cache-Control","private, max-age=600"); self.end_headers(); self.wfile.write(b); return
+            f=MD.set_file(Q.get("id",""),i)
+            if f is None: return self.send_error(404)
+            RP.send_file(self,f,"image/png" if f.suffix.lower()==".png" else "image/jpeg"); return
+        if path=="/api/rtsp/hold": RS.hold(self,Q.get("g",""),Q.get("p","")); return   # trigger of an on-connect sync group
+        if path=="/api/rtsp/clip": return self._j(RS.clip_for(Q.get("s","")))
+        if path.startswith("/rtclip/"):          # the clip a stream plays (preview in the page); ?conv=1&t=&w= converted
+            f=RS.clip_path(path[8:])
+            if f is None: return self.send_error(404)
+            if Q.get("conv")=="1":
+                try: t=float(Q.get("t",0)); w=int(Q.get("w",1280))
+                except ValueError: return self.send_error(400)
+                RP.send_converted(self,f,t,w); return
+            RP.send_file(self,f,"video/mp4"); return
+        if path=="/api/rtsp/probe":
+            f=RS.resolve(Q.get("f",""))
+            return self._j(RP.probe(f) if f else dict(ok=False,error="not found"))
+        if path=="/rsvid":                    # tab 12 picker: a serve-able video, original (?play=1) or converted (?conv=1&t=&w=)
+            f=RS.resolve(Q.get("f",""))
+            if f is None: return self.send_error(404)
+            if Q.get("conv")=="1":
+                try: t=float(Q.get("t",0)); w=int(Q.get("w",1280))
+                except ValueError: return self.send_error(400)
+                RP.send_converted(self,f,t,w); return
+            RP.send_file(self,f,"video/mp4"); return
+        if path=="/api/rec/probe":
+            f=REC.file_path(Q.get("session",""),Q.get("file",""))
+            return self._j(RP.probe(f) if f else dict(ok=False,error="not found"))
         if path=="/api/gpu/status":
             st=CAPMOD.status(); st["scan"]=SCAN.model_status()
             st["models"]=sorted(C.MODELS)
@@ -151,17 +244,61 @@ class H(BaseHTTPRequestHandler):
                         self.wfile.write(f); self.wfile.write(b"\r\n")
                     time.sleep(0.08)
             except Exception: return
-        h=html().encode()
-        self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8")
-        self.send_header("Content-Length",str(len(h))); self.end_headers(); self.wfile.write(h)
+        return self._static(html().encode(),"text/html; charset=utf-8")
 
     def do_POST(self):
+        if self.path.startswith("/api/raw/upload?"):   # raw body, streamed to disk (not JSON)
+            from urllib.parse import parse_qs
+            Q={k:v[0] for k,v in parse_qs(self.path.partition("?")[2]).items()}
+            return self._j(MD.upload(self,Q))
         n=int(self.headers.get("Content-Length",0))
+        if n>64*2**20:                      # JSON requests are small; never read a big body into memory (2026-11-12: a 15 GB
+            self.send_response(413); self.send_header("Connection","close"); self.end_headers()   # upload to an old build OOM-killed the server)
+            self.close_connection=True; return
         req=json.loads(self.rfile.read(n).decode() or "{}")
         p=self.path
+        if p=="/api/eval/approve_frame":
+            return self._j(EV.approve_event_frame(req.get("key",""),req.get("file",""),req.get("decision",""),req.get("type"),req.get("review")))
+        if p=="/api/eval/finish": return self._j(EV.finish_session(req.get("key","")))
+        if p=="/api/bench/judge": return self._j(BM.judge(req.get("tag",""),req.get("id",""),req.get("verdict","")))
+        if p=="/api/eval/options": return self._j(dict(errors=EV.ERRORS,situations=EV.SITUATIONS))
+        if p=="/api/bench/run": return self._j(BM.run(req.get("model",""),req.get("conf",0.25)))
+        if p=="/api/eval/decide":
+            return self._j(EV.decide(req.get("key",""),req.get("id",""),req.get("decision",""),req.get("note",""),req.get("type"),req.get("review")))
         if p=="/api/rec/start": return self._j(REC.start(req.get("cams"),req.get("fps"),req.get("width")))
         if p=="/api/rec/stop": return self._j(REC.stop())
+        if p=="/api/avail/start": return self._j(AV.start(req.get("url"),req.get("start"),req.get("end"),req.get("step",60),req.get("recheck",False)))
+        if p=="/api/avail/saved": return self._j(AV.saved(req.get("url"),req.get("key")))
+        if p=="/api/avail/stop": return self._j(AV.stop())
+        if p=="/api/avail/delete": return self._j(AV.delete(req.get("key"),req.get("t")))
+        if p=="/api/rtsp/save": return self._j(RS.save(req.get("streams")))
+        if p=="/api/rtsp/restart": return self._j(RS.restart())
+        if p=="/api/rtsp/stop": return self._j(RS.stop())
+        if p=="/api/rtsp/pause": return self._j(RS.pause())
+        if p=="/api/rtsp/public": return self._j(RS.set_public(req.get("host"),req.get("port")))
+        if p=="/api/rtsp/auth": return self._j(RS.set_auth(req.get("user"),req.get("pass")))
+        if p=="/api/rtsp/restart_group": return self._j(RS.restart_group(str(req.get("group") or "")))
+        if p=="/api/rtsp/resume": return self._j(RS.resume())
+        if p=="/api/avail/fullurl": return self._j(AV.full_url(req.get("key"),req.get("start",""),req.get("end")))
+        if p=="/api/raw/make_video":
+            return self._j(MD.make_video(req.get("sets"),req.get("name"),req.get("mode","hold"),req.get("hold_s",1),req.get("fps",5),req.get("order","name")))
+        if p=="/api/raw/auto_streams":
+            return self._j(MD.auto_streams(req.get("sets"),req.get("mode","hold"),req.get("hold_s",1),req.get("fps",5),bool(req.get("together")),req.get("group","")))
+        if p=="/api/raw/rename_set": return self._j(MD.rename_set(req.get("old"),req.get("new")))
+        if p=="/api/raw/new_set": return self._j(MD.new_set(req.get("name")))
+        if p=="/api/raw/finish_set": return self._j(MD.finish_set(req.get("name")))
+        if p=="/api/raw/delete": return self._j(MD.delete(req.get("kind"),req.get("id")))
         if p=="/api/rec/delete": return self._j(REC.delete(req.get("session"),req.get("file")))
+        if p=="/api/rec/rename":
+            sid,f=req.get("session"),req.get("file")
+            used=[u for u in RS.uses(sid,f) if u["enabled"]]
+            if used and not req.get("force"):
+                w=sum(u["viewers"] for u in used)
+                return self._j(dict(ok=False,confirm=f"Serve RTSP stream(s) {', '.join(u['name'] for u in used)} play this file; they will be switched to the new name"
+                                    +(f" and restarted ({w} viewer(s) watching now are disconnected)" if w else "")+". Continue?"))
+            r=REC.rename(sid,f,req.get("new"))
+            if r.get("ok") and r["old"]!=r["new"]: r["streams"]=RS.rename_refs(sid,r["old"],r["new"])
+            return self._j(r)
         if p=="/api/preview/open":
             PV.open_at(req.get("url",""),req.get("datetime",""))
             return self._j(dict(ok=True))
@@ -452,5 +589,12 @@ class Srv(ThreadingHTTPServer):
     request_queue_size=256; daemon_threads=True; allow_reuse_address=True
 if __name__=="__main__":
     port=PORT
+    def _warm():   # build the slow caches once in the background so the first click is fast
+        for fn in (C.dataset_catalog, C.scan_queue, C.history_items):
+            try: fn()
+            except Exception as e: print("warm-up", fn.__name__, e, flush=True)
+    import threading; threading.Thread(target=_warm, daemon=True).start()
+    n=RS.reap_orphans()
+    if n: print(f"stopped {n} Serve RTSP group player(s) left by an earlier run",flush=True)
     print(f"sack labelling platform on 0.0.0.0:{port}",flush=True)
     Srv(("0.0.0.0",port),H).serve_forever()

@@ -13,7 +13,7 @@ DATA_DIR/recordings/<session>/<camera>_partNNN.mp4.
 - session.json keeps each camera link exactly as entered (incl. password) so it can be shown and re-used;
   live status and logs show links masked (***). Keep the data folder private (it is git-ignored).
 """
-import json, re, subprocess, threading, time
+import json, os, re, subprocess, threading, time
 from datetime import datetime
 from pathlib import Path
 
@@ -233,11 +233,12 @@ def sessions():
         files = session_files(d.name)
         errors = {}
         for c in meta.get("cameras", []):
-            if not any(f["name"].startswith(c["name"] + "_part") and f["bytes"] > 0 for f in files):
+            mine = set(c.get("files") or [])         # files may have been renamed; session.json keeps the current names
+            if not any((f["name"] in mine or f["name"].startswith(c["name"] + "_part")) and f["bytes"] > 0 for f in files):
                 errors[c["name"]] = last_error(d / f"{c['name']}.log") or "no video received"
         out.append(dict(session=d.name, started=meta.get("started"), stopped=meta.get("stopped"), errors=errors,
                         fps=meta.get("fps"), width=meta.get("width", "original"), cameras=[c["name"] for c in meta.get("cameras", [])],
-                        links=[dict(name=c["name"], url=c.get("url", "")) for c in meta.get("cameras", [])],
+                        links=[dict(name=c["name"], url=c.get("url", ""), files=c.get("files", [])) for c in meta.get("cameras", [])],
                         files=files, bytes=sum(f["bytes"] for f in files),
                         active=(S["running"] and S["session"] == d.name)))
     return out
@@ -272,3 +273,34 @@ def delete(sid, name=None):
             f.unlink()
     d.rmdir()
     return dict(ok=True, deleted=sid)
+
+
+def rename(sid, name, new):
+    """Rename one recorded video inside its session folder (never overwrites; not while that session records).
+    session.json is updated so the camera still owns the file. Returns the old and new file names."""
+    new = re.sub(r"\.mp4$", "", (new or "").strip(), flags=re.I)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", new):
+        return dict(ok=False, error="new name may use only letters, digits, _ and - (1-80 characters)")
+    new += ".mp4"
+    with LOCK:
+        if S["running"] and S["session"] == sid:
+            return dict(ok=False, error="this session is still recording - stop it first")
+        f = file_path(sid, name)
+        if f is None or f.suffix != ".mp4":
+            return dict(ok=False, error="file not found")
+        if new == f.name:
+            return dict(ok=True, old=name, new=new)
+        t = f.with_name(new)
+        if t.exists():
+            return dict(ok=False, error=f"{new} already exists in this session")
+        os.link(f, t)                  # hard link + unlink = rename that can never replace an existing file
+        f.unlink()
+        mp = f.parent / "session.json"
+        try:
+            meta = json.loads(mp.read_text())
+            for c in meta.get("cameras", []):
+                c["files"] = [new if x == name else x for x in c.get("files", [])]
+            tmp = mp.with_name(".session.json.tmp"); tmp.write_text(json.dumps(meta, indent=1)); os.replace(tmp, mp)
+        except Exception:
+            pass
+    return dict(ok=True, old=name, new=new)
