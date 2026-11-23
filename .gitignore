@@ -15,3 +15,5 @@ venv/
 *.mkv
 # local backup copies of edited files
 *.bak_*
+# data fetched by scripts/data_sync.sh download (models, datasets, eval, runs)
+project/

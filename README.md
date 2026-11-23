@@ -75,6 +75,17 @@ Model weights are **not** in the repo. The model list is `MODELS` in `core.py` (
 - Per stream: start on connect or always playing; at the end stop / loop / freeze then stop / freeze then loop; start and end point (picked in a player); re-encode; sync group (streams in one group are one ffmpeg: they start, loop and freeze together).
 - Loops that start inside a video play a frame-exact clip cut once into `<data>/rtsp_serve/live/clips/` (never deleted automatically).
 
+## Data: moving it to a new machine (OneDrive)
+
+The data (about 80–110 GB) is not in git. `scripts/data_sync.sh` moves it through OneDrive with rclone.
+
+1. On each machine, install rclone, run `rclone config` once, add a remote named `onedrive` (type `onedrive`) and log in in the browser.
+2. On the server that has the data: `scripts/data_sync.sh upload`. It copies the platform data, the Serve RTSP videos, and models/, datasets/, eval/ and the key files of runs/ to `onedrive:sack_platform_data`. It never deletes anything, and it can be re-run to continue.
+3. On a fresh clone: `scripts/data_sync.sh download`. It fills `data/` and `project/`, writes `.env` if there is none, and rewrites the old server's paths in the saved state.
+4. Check `PYTHON` and `RTSP_HOST` in `.env`, then run `./run.sh`.
+
+Options: `REMOTE=...` uses another folder or remote; `FULL_RUNS=1` uploads all of runs/ (31 GB); `NO_VIDEOS=1` skips the videos. The data holds camera and viewer logins, so keep the OneDrive folder private and do not share it by link.
+
 ## Security notes
 - `data/state/sources.json` contains RTSP links **with credentials**. `data/` is git-ignored; never commit it.
 - The server has no authentication. Run it on a trusted LAN only, or behind a reverse proxy with auth.
